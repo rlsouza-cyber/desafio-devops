@@ -1,0 +1,92 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. Verifica o código-fonte do repositório
+    - uses: actions/checkout@v2
+    
+    # 2. Instala as dependências do projeto
+    - name: Install dependencies
+      run: npm ci
+      
+    # 3. Executa os testes unitários
+    - name: Run unit tests
+      run: npm test
+      
+    # 4. Analisa o código com o SonarQube
+    - name: SonarQube Analysis
+      uses: sonarsource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      
+    # 5. Constrói a aplicação
+    - name: Build application
+      run: npm run build
+      
+    # 6. Armazena o artefato como release do GitHub
+    - name: Upload artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: dist
+        path: dist
+        
+    # 7. Faz o deploy da aplicação no ambiente de teste, se todos os passos anteriores forem bem-sucedidos
+    - name: Deploy to test environment
+      if: success()
+      uses: actions/checkout@v2
+      env:
+        HOST_USERNAME: ${{ secrets.HOST_USERNAME }}
+        HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
+        ENVIRONMENT: test
+      run: |
+        ssh $HOST_USERNAME@example.com "rm -rf app && mkdir app && scp -r dist/* $HOST_USERNAME@example.com:app"
+        
+    # 8. Cria um ambiente de produção e restringe o deploy a um grupo específico do GitHub
+    - name: Deploy to production
+      if: success()
+      uses: actions/checkout@v2
+      env:
+        HOST_USERNAME: ${{ secrets.PROD_HOST_USERNAME }}
+        HOST_PASSWORD: ${{ secrets.PROD_HOST_PASSWORD }}
+        ENVIRONMENT: production
+      # Usa a funcionalidade de ambiente do GitHub para restringir o deploy
+      # a um grupo específico de usuários do GitHub
+      with:
+        environment: production
+        if: github.actor == 'admin-user' || github.actor_in_group('deploy-team')
+      run: |
+        ssh $HOST_USERNAME@example.com "rm -rf app && mkdir app && scp -r dist/* $HOST_USERNAME@example.com:app"
+        
+  # 9. Notifica o desenvolvedor via e-mail, se o processo de CI/CD falhar em qualquer etapa
+  notify_failure:
+    runs-on: ubuntu-latest
+    needs: build
+    if: failure()
+    
+    steps:
+    - name: Notify developer
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 465
+        username: ${{secrets.EMAIL_USER}}
+        password: ${{secrets.EMAIL_PASS}}
+        subject: CI/CD Pipeline Failed
+        body: The CI/CD pipeline has failed. Please review the logs.
+        to: developer@example.com
+        from: Github Actions
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  PROD_HOST_USERNAME: ${{ secrets.PROD_HOST_USERNAME }}
+  PROD_HOST_PASSWORD: ${{ secrets.PROD_HOST_PASSWORD }}
